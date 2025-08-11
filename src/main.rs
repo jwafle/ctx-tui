@@ -266,18 +266,20 @@ impl App {
                                 let n = &self.tree.nodes[idx];
 
                                 // constants that match the text you render
-                                const GUTTER_W: u16 = 2;            // "> " or "  "
-                                const INDENT_STEP: u16 = 2;         // "  " per depth
-                                const EXPANDER_W: u16 = 2;          // "▸ " or "▾ "
-                                const CHECKBOX_W: u16 = 3;          // "[ ]" or "[x]"
+                                const GUTTER_W: u16 = 2; // "> " or "  "
+                                const INDENT_STEP: u16 = 2; // "  " per depth
+                                const EXPANDER_W: u16 = 2; // "▸ " or "▾ "
+                                const CHECKBOX_W: u16 = 3; // "[ ]" or "[x]"
 
                                 let indent_cols = n.depth as u16 * INDENT_STEP;
                                 let expander_x = inner.x + GUTTER_W + indent_cols;
                                 let checkbox_x = expander_x + EXPANDER_W;
 
                                 // hit-tests (end is exclusive)
-                                let on_expander = m.column >= expander_x && m.column < expander_x + EXPANDER_W;
-                                let on_checkbox = m.column >= checkbox_x && m.column < checkbox_x + CHECKBOX_W;
+                                let on_expander =
+                                    m.column >= expander_x && m.column < expander_x + EXPANDER_W;
+                                let on_checkbox =
+                                    m.column >= checkbox_x && m.column < checkbox_x + CHECKBOX_W;
 
                                 if on_expander {
                                     self.tree.toggle_expand_at(idx);
@@ -285,7 +287,6 @@ impl App {
                                     match n.kind {
                                         Kind::Dir => self.tree.toggle_include_subtree(),
                                         Kind::File => self.tree.toggle_include(),
-                                        _ => {}
                                     }
                                 }
                             }
