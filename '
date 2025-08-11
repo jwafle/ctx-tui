@@ -28,10 +28,22 @@ struct Args {
     path: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 enum Kind {
     Dir,
     File,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HoverPart {
+    Row,
+    Expander,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Hover {
+    idx: usize,
+    part: HoverPart,
 }
 
 #[derive(Clone, Debug)]
@@ -172,6 +184,13 @@ impl Tree {
     }
 
     fn toggle_include(&mut self) {
+        let p = self.nodes[self.cursor].path.clone();
+        if !self.included.insert(p.clone()) {
+            self.included.remove(&p);
+        }
+    }
+
+    fn toggle_include_subtree(&mut self) {
         let root = self.cursor;
         let make_included = !self.included.contains(&self.nodes[root].path);
         fn walk(nodes: &Vec<Node>, i: usize, acc: &mut Vec<PathBuf>) {
@@ -205,7 +224,7 @@ struct App {
     tree: Tree,
     path: PathBuf,
     last_size: Rect,
-    first_visible: usize,
+    hover: Option<Hover>,
 }
 
 impl App {
@@ -218,7 +237,7 @@ impl App {
             tree,
             path: abs,
             last_size: Rect::default(),
-            first_visible: 0,
+            hover: None,
         })
     }
 
@@ -231,29 +250,6 @@ impl App {
             return true;
         }
         false
-    }
-
-    fn ensure_cursor_visible(&mut self, view_rows: usize) {
-        let vis = self.tree.visible_indices();
-        if vis.is_empty() {
-            self.first_visible = 0;
-            return;
-        }
-
-        let cur_pos = vis.iter().position(|&i| i == self.tree.cursor).unwrap_or(0);
-
-        if self.first_visible > cur_pos {
-            self.first_visible = cur_pos;
-        }
-
-        if cur_pos >= self.first_visible + view_rows {
-            self.first_visible = cur_pos.saturating_sub(view_rows - 1);
-        }
-
-        let max_start = vis.len().saturating_sub(view_rows);
-        if self.first_visible > max_start {
-            self.first_visible = max_start;
-        }
     }
 
     fn file_area_with_margin(&self) -> Rect {
@@ -273,6 +269,7 @@ impl App {
                 KeyCode::Left | KeyCode::Char('h') => self.tree.collapse(),
                 KeyCode::Right | KeyCode::Char('l') => self.tree.expand(),
                 KeyCode::Char(' ') => self.tree.toggle_include(),
+                KeyCode::Char('a') => self.tree.toggle_include_subtree(),
                 _ => {}
             },
             Event::Mouse(m) => {
@@ -280,6 +277,7 @@ impl App {
                 const GUTTER_W: u16 = 2; // "> " or "  "
                 const INDENT_STEP: u16 = 2; // "  " per depth
                 const EXPANDER_W: u16 = 2; // "▸ " or "▾ "
+                const CHECKBOX_W: u16 = 3; // "[ ]" or "[x]"
 
                 let inner = self.file_area_with_margin();
 
@@ -287,12 +285,30 @@ impl App {
                     MouseEventKind::ScrollUp => self.tree.move_cursor(-1),
                     MouseEventKind::ScrollDown => self.tree.move_cursor(1),
                     MouseEventKind::Moved => {
+                        self.hover = None;
+
                         if self.mouse_is_in_area(m, inner) {
-                            let row = (m.row - inner.y) as usize + self.first_visible;
+                            let row = (m.row - inner.y) as usize;
                             let vis = self.tree.visible_indices();
                             if let Some(&idx) = vis.get(row) {
                                 // set the cursor to the hovered row
                                 self.tree.cursor = idx;
+
+                                let n = &self.tree.nodes[idx];
+                                let indent_cols = n.depth as u16 * INDENT_STEP;
+                                let expander_x = inner.x + GUTTER_W + indent_cols;
+
+                                let on_expander = m.column >= expander_x - 1
+                                    && m.column < expander_x + EXPANDER_W;
+
+                                self.hover = Some(Hover {
+                                    idx,
+                                    part: if on_expander {
+                                        HoverPart::Expander
+                                    } else {
+                                        HoverPart::Row
+                                    },
+                                });
                             }
                         }
                     }
@@ -300,7 +316,7 @@ impl App {
                         // Is the click inside the files list?
                         if self.mouse_is_in_area(m, inner) {
                             // Which row got clicked?
-                            let row = (m.row - inner.y) as usize + self.first_visible;
+                            let row = (m.row - inner.y) as usize;
                             let vis = self.tree.visible_indices();
                             if row < vis.len() {
                                 let idx = vis[row];
@@ -311,20 +327,25 @@ impl App {
 
                                 let indent_cols = n.depth as u16 * INDENT_STEP;
                                 let expander_x = inner.x + GUTTER_W + indent_cols;
+                                let checkbox_x = expander_x + EXPANDER_W;
 
-                                // hit-tests
-                                let on_expander = n.kind == Kind::Dir
-                                    && m.column >= expander_x - 1
-                                    && m.column < expander_x + EXPANDER_W;
-                                // consider a checkbox hit to be anything on the row besides the
-                                // expander
+                                // hit-tests (end is exclusive)
+                                let on_expander =
+                                    m.column >= expander_x && m.column < expander_x + EXPANDER_W;
+                                let on_checkbox =
+                                    m.column >= checkbox_x && m.column < checkbox_x + CHECKBOX_W;
 
                                 if on_expander {
                                     self.tree.toggle_expand_at(idx);
-                                } else {
-                                    self.tree.toggle_include();
+                                } else if on_checkbox {
+                                    match n.kind {
+                                        Kind::Dir => self.tree.toggle_include_subtree(),
+                                        Kind::File => self.tree.toggle_include(),
+                                    }
                                 }
                             }
+                        } else {
+                            self.hover = None;
                         }
                     }
                     _ => {}
@@ -332,10 +353,6 @@ impl App {
             }
             _ => {}
         }
-
-        let inner = self.file_area_with_margin();
-        let view_rows = inner.height as usize;
-        self.ensure_cursor_visible(view_rows);
         Ok(())
     }
 
@@ -357,17 +374,14 @@ impl App {
 fn ui(frame: &mut Frame, app: &App) {
     // layout: [sidebar | main] above [footer]
     let (files_area, details_area, footer_area) = app.layout(frame.area());
-    let inner = app.file_area_with_margin();
-
-    let vis = app.tree.visible_indices();
-    let start = app.first_visible.min(vis.len());
-    let end = (start + inner.height as usize).min(vis.len());
 
     let mut lines: Vec<Line> = Vec::new();
-
-    for &idx in &vis[start..end] {
+    let vis = app.tree.visible_indices();
+    for &idx in vis.iter() {
         let n = &app.tree.nodes[idx];
         let is_cursor = idx == app.tree.cursor;
+
+        let hover_part = app.hover.filter(|h| h.idx == idx).map(|h| h.part);
 
         let gutter = if is_cursor { "> " } else { "  " };
         let indent = "  ".repeat(n.depth);
@@ -383,6 +397,10 @@ fn ui(frame: &mut Frame, app: &App) {
         };
         let name = format!(" {}", n.name);
 
+        // Base styles
+        let part_hover_style = Style::default()
+            .bg(Color::Gray)
+            .add_modifier(Modifier::BOLD);
         let cursor_style = Style::default()
             .bg(Color::DarkGray)
             .add_modifier(Modifier::BOLD);
@@ -392,7 +410,7 @@ fn ui(frame: &mut Frame, app: &App) {
         spans.push(Span::raw(gutter));
 
         // If we want the entire non-cursor row to have a hover bg:
-        let row_style = if is_cursor {
+        let row_style = if hover_part == Some(HoverPart::Row) && is_cursor {
             cursor_style
         } else {
             Style::default()
@@ -401,9 +419,18 @@ fn ui(frame: &mut Frame, app: &App) {
         // indent (inherits row hover)
         spans.push(Span::styled(indent, row_style));
 
-        spans.push(Span::styled(expander, row_style));
+        let expander_style = match hover_part {
+            Some(HoverPart::Expander) => part_hover_style,
+            _ if is_cursor && hover_part == Some(HoverPart::Row) => cursor_style,
+            _ => Style::default(),
+        };
+        spans.push(Span::styled(expander, expander_style));
 
-        spans.push(Span::styled(checkbox, row_style));
+        let checkbox_style = match hover_part {
+            _ if is_cursor && hover_part == Some(HoverPart::Row) => cursor_style,
+            _ => Style::default(),
+        };
+        spans.push(Span::styled(checkbox, checkbox_style));
 
         spans.push(Span::styled(name, row_style));
 
@@ -415,14 +442,11 @@ fn ui(frame: &mut Frame, app: &App) {
 
         lines.push(line);
     }
-    let more_above = app.first_visible > 0;
-    let more_below = vis.len() > end;
-    let title = format!(
-        "Files {}{}",
-        if more_above { "▲" } else { " " },
-        if more_below { "▼" } else { " " }
+    let sidebar = Paragraph::new(lines).block(
+        Block::default()
+            .title("Files (↑↓ ←/→ expand/collapse, space select, a subtree)")
+            .borders(Borders::ALL),
     );
-    let sidebar = Paragraph::new(lines).block(Block::default().title(title).borders(Borders::ALL));
     frame.render_widget(sidebar, files_area);
 
     let details = Paragraph::new("Details (token counts coming next)")
