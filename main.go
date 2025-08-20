@@ -155,6 +155,7 @@ func newModel(path string) model {
 	flat := flatten(root)
 	ld := list.NewDefaultDelegate()
 	ld.SetSpacing(0)
+	ld.SetHeight(1)
 	d := customDelegate{ld}
 	l := list.New(flat, d, 0, 0)
 	l.Title = "File Tree"
@@ -242,7 +243,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						sel.node.toggleSelect(on)
 					}
 				case "tab":
-					m.focus = 1
+					m.focus = textAreaView
 					cmds = append(cmds, m.textarea.Focus())
 				}
 			}
@@ -251,7 +252,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.focus == textAreaView {
 			switch msg.String() {
 			case "tab":
-				m.focus = 2
+				m.focus = acceptView
 				m.textarea.Blur()
 			}
 			m.textarea, cmd = m.textarea.Update(msg)
@@ -296,7 +297,7 @@ func (m model) View() string {
 	rightTop := "User Request:"
 	rightMid := m.textarea.View()
 	rightBot := blurredButton
-	if m.focus == 2 {
+	if m.focus == acceptView {
 		rightBot = focusedButton
 	}
 	right := lipgloss.NewStyle().Width(m.width / 2).Height(m.height - 4).PaddingLeft(2).Render(rightTop + "\n" + rightMid + "\n\n" + rightBot)
