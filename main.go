@@ -156,6 +156,7 @@ func newModel(path string) model {
 	ld := list.NewDefaultDelegate()
 	ld.SetSpacing(0)
 	ld.SetHeight(1)
+	ld.ShowDescription = false
 	d := customDelegate{ld}
 	l := list.New(flat, d, 0, 0)
 	l.Title = "File Tree"
